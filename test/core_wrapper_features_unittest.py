@@ -24,12 +24,18 @@ from math import sqrt
 import warnings
 from contextlib import contextmanager
 
-from OCC.Core.Standard import Standard_Transient, Handle_Standard_Transient
-from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox
+from OCC.Core.Standard import Standard_Transient
+from OCC.Core.Bnd import Bnd_Box
+from OCC.Core.BRepExtrema import BRepExtrema_ShapeProximity
+from OCC.Core.BRepBndLib import brepbndlib_Add
+from OCC.Core.BRepMesh import BRepMesh_IncrementalMesh
+from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeSphere
 from OCC.Core.BRepBuilderAPI import (BRepBuilderAPI_MakeVertex,
-                                     BRepBuilderAPI_MakeEdge)
+                                     BRepBuilderAPI_MakeEdge,
+                                     BRepBuilderAPI_Sewing)
 from OCC.Core.gp import (gp_Pnt, gp_Vec, gp_Pnt2d, gp_Lin, gp_Dir, gp_Ax2,
                          gp_Quaternion, gp_QuaternionSLerp, gp_XYZ, gp_Mat)
+from OCC.Core.math import math_Matrix, math_Vector
 from OCC.Core.GC import GC_MakeSegment
 from OCC.Core.STEPControl import STEPControl_Writer
 from OCC.Core.Interface import Interface_Static_SetCVal, Interface_Static_CVal
@@ -54,6 +60,9 @@ from OCC.Core.Geom import Geom_Curve, Geom_Line, Geom_BSplineCurve
 from OCC.Core.BRep import BRep_Tool_Curve
 from OCC.Core.HLRBRep import HLRBRep_Algo, HLRBRep_HLRToShape
 from OCC.Core.HLRAlgo import HLRAlgo_Projector
+from OCC.Core.TopTools import (TopTools_HArray1OfShape,
+                               TopTools_HArray2OfShape,
+                               TopTools_HSequenceOfShape)
 
 @contextmanager
 def assert_warns_deprecated():
@@ -61,8 +70,10 @@ def assert_warns_deprecated():
         warnings.simplefilter("always")
         yield w
         # Verify some things
-        assert issubclass(w[-1].category, DeprecationWarning)
-        assert "deprecated" in str(w[-1].message)
+        if not issubclass(w[-1].category, DeprecationWarning):
+            raise AssertionError("Wrong exception type")
+        if not "deprecated" in str(w[-1].message):
+            raise AssertionError("deprecated string not in message")
 
 
 
@@ -99,7 +110,8 @@ class TestWrapperFeatures(unittest.TestCase):
             handle = Standard_Transient(t)
             return handle
         t = Standard_Transient()
-        evil_function(t)
+        self.assertIsNotNone(t)
+        self.assertIsNotNone(evil_function(t))
 
     def test_list(self):
         '''
@@ -276,8 +288,28 @@ class TestWrapperFeatures(unittest.TestCase):
         self.assertEqual(p_coord[1], 2.)
         self.assertEqual(p_coord[2], 3.2)
 
-    # TODO : add a testStandardRealByRefPassedReturned
-    def test_standard_integer_by_ref_passed_returned(self):
+    def test_Standard_Real_by_ref_passed_returned(self):
+        '''
+        Check getters and setters for method that take/return
+        Standard_Real by reference. Ref github Issue #710
+        '''
+        # create a 2*2 matrix
+        #    | -1.    -2. |
+        #m = |  4.    5.5 |
+        
+        # lower indices are 0, to comply with python list indexing
+        mat = math_Matrix(0, 1, 0, 1)
+        mat.SetValue(0, 0, -1)
+        mat.SetValue(0, 1, -2)
+        mat.SetValue(1, 0, 4)
+        mat.SetValue(1, 1, 5.5)
+        # the returned value should be the same
+        self.assertEqual(mat.GetValue(0, 0), -1)
+        self.assertEqual(mat.GetValue(0, 1), -2)
+        self.assertEqual(mat.GetValue(1, 0), 4)
+        self.assertEqual(mat.GetValue(1, 1), 5.5)
+
+    def test_Standard_Integer_by_ref_passed_returned(self):
         '''
         Checks the Standard_Integer & byreference return parameter
         '''
@@ -285,7 +317,7 @@ class TestWrapperFeatures(unittest.TestCase):
         sfs.SetFixShellMode(5)
         self.assertEqual(sfs.GetFixShellMode(), 5)
 
-    def testStandardBooleanByRefPassedReturned(self):
+    def test_Standard_Boolean_by_ref_passed_returned(self):
         '''
         Checks the Standard_Boolean & byreference return parameter
         '''
@@ -295,47 +327,45 @@ class TestWrapperFeatures(unittest.TestCase):
         sfw.SetModifyGeometryMode(False)
         self.assertEqual(sfw.GetModifyGeometryMode(), False)
 
-    def testTopoDS_byref_arguments(self):
+    def test_TopoDS_byref_arguments(self):
         '''
         Test byref pass arguments to TopoDS
         '''
         cyl1 = BRepPrimAPI_MakeCylinder(10., 10.).Shape()
         cyl2 = BRepPrimAPI_MakeCylinder(100., 50.).Shape()
         c = TopoDS_Compound()
+        self.assertTrue(c.IsNull())
         bb = TopoDS_Builder()
         bb.MakeCompound(c)
         for child in [cyl1, cyl2]:
             bb.Add(c, child)
+        self.assertFalse(c.IsNull())
 
-    def test_standard_boolean_byref(self):
+    def test_Standard_Boolean_byref(self):
         '''
         Test byref returned standard_boolean
         '''
         cs = ChFiDS_ChamfSpine()
-        cs.SetDistAngle(1., 45, True)
-        self.assertEqual(cs.GetDistAngle(), (1.0, 45.0, True))
+        cs.SetDistAngle(1., 45)
+        self.assertEqual(cs.GetDistAngle(), (1.0, 45.))
 
-    def test_dump_to_string(self):
+    def test_pickle_topods_shape_to_from(self):
         '''
         Checks if the pickle python module works for TopoDS_Shapes
         '''
         # Create the shape
         box_shape = BRepPrimAPI_MakeBox(100, 200, 300).Shape()
         shp_dump = pickle.dumps(box_shape)
+        # file to dump to/from
+        filename = os.path.join('.', 'test_io', 'box_shape_generated.brep')
         # write to file
-        output = open("./test_io/box_shape_generated.brep", "wb")
-        output.write(shp_dump)
-        output.close()
-        self.assertTrue(os.path.isfile("./test_io/box_shape_generated.brep"))
-
-    def test_pickle_from_file(self):
-        '''
-        Checks if the pickle python module works for TopoDS_Shapes
-        '''
-        shp_dump = open("./test_io/box_shape.brep", "rb")
-        box_shape = pickle.load(shp_dump)
-        shp_dump.close()
-        self.assertFalse(box_shape.IsNull())
+        with open(filename, "wb") as output: 
+            output.write(shp_dump)
+        self.assertTrue(os.path.isfile(filename))
+        # load from file
+        with open(filename, "rb") as dump_from_file:
+            pickled_shape = pickle.load(dump_from_file)
+        self.assertFalse(pickled_shape.IsNull())       
 
     def test_sub_class(self):
         """ Test: subclass """
@@ -374,13 +404,13 @@ class TestWrapperFeatures(unittest.TestCase):
         self.assertEqual(vec.Magnitude(), 1.)
         self.assertEqual(vec.get_attribute(), "something")
 
-    def testProtectedConstructor(self):
+    def test_protected_constructor(self):
         """ Test: protected constructor """
         # 1st, class with no subclass
         tds_builder = TopoDS_Builder()
         self.assertTrue(hasattr(tds_builder, "MakeCompound"))
 
-    def testAutoImportOfDependentModules(self):
+    def test_auto_import_of_dependent_modules(self):
         """ Test: automatic import of dependent modules """
         returned_object = GCE2d_MakeSegment(gp_Pnt2d(1, 1),
                                             gp_Pnt2d(3, 4)).Value()
@@ -451,22 +481,31 @@ class TestWrapperFeatures(unittest.TestCase):
         ''' OCE classes the defines standard alllocator can be instanciated
         if they're not abstract nor define any protected or private
         constructor '''
-        BRep_Builder()
-        TopoDS_Builder()
-        ShapeAnalysis_Curve()
+        b = BRep_Builder()
+        self.assertIsInstance(b, BRep_Builder)
+        t = TopoDS_Builder()
+        self.assertIsInstance(t, TopoDS_Builder)
+        s = ShapeAnalysis_Curve()
+        self.assertIsInstance(s, ShapeAnalysis_Curve)
 
     def test_handling_exceptions(self):
-        """ asserts that handling of OCC exceptions is handled correctly in pythonocc
-
-        See Also
-        --------
-
-        issue #259 -- Standard errors like Standard_OutOfRange not caught
-
+        """ asserts that handling of OCC exceptions is handled correctly catched
+        see issue #259 -- Standard errors like Standard_OutOfRange not caught
         """
-        d = gp_Dir(0, 0, 1)
+        # Standard_OutOfRange
         with self.assertRaises(RuntimeError):
-            d.Coord(-1)  # Standard_OutOfRange
+            gp_Dir(0, 0, 1).Coord(-1)
+        # StdFail_NotDone
+        with self.assertRaises(RuntimeError):
+            BRepBuilderAPI_MakeEdge(gp_Pnt(0, 0, 0), gp_Pnt(0, 0, 0)).Edge()
+        # Standard_DomainError
+        with self.assertRaises(RuntimeError):
+            BRepPrimAPI_MakeBox(0, 0, 0)
+        # Standard_OutOfRange, related to specific issue in #778
+        # Note: the exception is raised if and only if OCCT is compiled
+        # using -D BUILD_RELEASE_DISABLE_EXCEPTIONS=OFF
+        with self.assertRaises(RuntimeError):
+            BRepBuilderAPI_Sewing().FreeEdge(-1)
 
     def test_memory_handle_getobject(self):
         """
@@ -488,8 +527,6 @@ class TestWrapperFeatures(unittest.TestCase):
         self.assertTrue(b.IsEqual(line3.EndPoint(), 0.01))
         self.assertTrue(b.IsEqual(GC_MakeSegment(a, b).Value().EndPoint(), 0.01))
 
-
-
     def test_local_properties(self):
         """ Get and modify class local properties
         """
@@ -502,9 +539,11 @@ class TestWrapperFeatures(unittest.TestCase):
         """ Test if repr string is properly returned
         """
         p = gp_Pnt(1, 2, 3)
-        self.assertEqual(str(p), "class<'gp_Pnt'>")
+        self.assertEqual(repr(p), "<class 'gp_Pnt'>")
+        empty_shape = TopoDS_Shape()
+        self.assertEqual(repr(empty_shape), "<class 'TopoDS_Shape': Null>")
         shp = BRepPrimAPI_MakeBox(10, 20, 30).Shape()
-        self.assertTrue("class<'TopoDS_Solid'; id:" in str(shp))
+        self.assertEqual(repr(shp), "<class 'TopoDS_Solid'>")
 
     def test_downcast_curve(self):
         """ Test if a GeomCurve can be DownCasted to a GeomLine
@@ -515,7 +554,7 @@ class TestWrapperFeatures(unittest.TestCase):
         self.assertTrue(isinstance(curve, Geom_Curve))
         # The edge is internally a line, so we should be able to downcast it
         line = Geom_Line.DownCast(curve)
-        self.assertTrue(isinstance(curve, Geom_Curve))
+        self.assertTrue(isinstance(line, Geom_Curve))
         # Hence, it should not be possible to downcast it as a B-Spline curve
         bspline = Geom_BSplineCurve.DownCast(curve)
         self.assertTrue(bspline is None)
@@ -539,42 +578,6 @@ class TestWrapperFeatures(unittest.TestCase):
             self.assertTrue(isinstance(it.Value(), int))
             it.Next()
 
-    def test_deprecation_warning(self):
-        """ since pythonocc-0.18.2. import OCC.* changed to import OCC.Core.*
-        Such deprecated import raises a DeprecatedWarning
-        """
-        with assert_warns_deprecated():
-            from OCC.gp import gp_Pln
-
-    def test_deprecation_get_handle(self):
-        """ Handles are now completely transparent. The GetHandle method is
-        not required anymore.
-        """
-        t = Standard_Transient()
-        with assert_warns_deprecated():
-            t.GetHandle()
-
-    def test_deprecation_handle_class(self):
-        """ Handles are now completely transparent. The Handle_* constructor is
-        not required anymore.
-        """
-        t = Standard_Transient()
-        with assert_warns_deprecated():
-            h = Handle_Standard_Transient(t)
-
-    def test_deprecation_get_object(self):
-        """ Handles are now completely transparent. The GetObject method is
-        not required anymore.
-        """
-        t = Standard_Transient()
-        with assert_warns_deprecated():
-            t.GetObject()
-
-    def test_deprecation_downcasts(self):
-        t = Standard_Transient()
-        with assert_warns_deprecated():
-            Handle_Standard_Transient.DownCast(t)
-
     def test_array_iterator(self):
         P0 = gp_Pnt(1, 2, 3)
         list_of_points = TColgp_Array1OfPnt(5, 8)
@@ -595,11 +598,11 @@ class TestWrapperFeatures(unittest.TestCase):
         for pnt in list_of_points:
             self.assertTrue(isinstance(pnt, gp_Pnt))
 
-    def test_repr_for_null_topods_shapes(self):
+    def test_repr_for_null_TopoDS_Shape(self):
         # create null vertex and shape
         v = TopoDS_Vertex()
-        s = TopoDS_Shape()
         self.assertTrue('Null' in v.__repr__())
+        s = TopoDS_Shape()
         self.assertTrue('Null' in s.__repr__())
 
     def test_in_place_operators(self):
@@ -661,9 +664,10 @@ class TestWrapperFeatures(unittest.TestCase):
         self.assertEqual(d.Z(), 9.)
 
     def test_shape_conversion_as_py_none(self):
-        # see issue #600 and PR #614
-        # a null topods_shape should be returned as Py_None by the TopoDS transformer
-        # the following test case returns a null topods_shape
+        """ see issue #600 and PR #614
+        a null topods_shape should be returned as Py_None by the TopoDS transformer
+        the following test case returns a null topods_shape
+        """
         box = BRepPrimAPI_MakeBox(1., 1., 1.).Shape()
         hlr = HLRBRep_Algo()
         hlr.Add(box)
@@ -674,6 +678,64 @@ class TestWrapperFeatures(unittest.TestCase):
         hlr_shapes = HLRBRep_HLRToShape(hlr)
         visible_smooth_edges = hlr_shapes.Rg1LineVCompound()
         self.assertTrue(visible_smooth_edges is None)
+
+    def test_DumpToString(self):
+        """ some objects can be serialized to a string
+        """
+        v = math_Vector(0, 2)
+        serialized_v = v.DumpToString()
+        # should output
+        expected_output = 'math_Vector of Length = 3\nmath_Vector(0) = 0\nmath_Vector(1) = 0\nmath_Vector(2) = 0\n'
+        self.assertEqual(expected_output, serialized_v)
+
+    def test_DumpJsonToString(self):
+        """ Since opencascade 7x, some objects can be serialized to json
+        """
+        # create a sphere with a radius of 10.
+        sph= BRepPrimAPI_MakeSphere(10.).Shape()
+        # compute the Bnd box for this sphere
+        bnd_box = Bnd_Box()
+        brepbndlib_Add(sph, bnd_box)
+        # check the result
+        corner_min = bnd_box.CornerMin()
+        self.assertEqual([round(corner_min.X(), 3), round(corner_min.Y(), 3), round(corner_min.Z(), 3)],
+                         [-10., -10., -10.])
+        # check dump json is working
+        json_string = bnd_box.DumpJsonToString()
+        expected_output = '"Bnd_Box": {"CornerMin": [-10, -10, -10], "CornerMax": [10, 10, 10], "Gap": 1e-07, "Flags": 0}'
+        self.assertEqual(json_string, expected_output)
+
+    def test_harray1_harray2_hsequence(self):
+        """ Check that special wrappers for harray1, harray2 and hsequence.
+        Only check that related classes can be instanciated.
+        """
+        TopTools_HArray1OfShape(0, 3)
+        TopTools_HArray2OfShape(0, 3, 0, 3)
+        TopTools_HSequenceOfShape()
+
+    def test_ncollection_datamap_extension(self):
+        """ NCollection_DataMap class adds a Keys() method that return keys in a Python List
+        """
+        box1 = BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), gp_Pnt(20, 20, 20)).Shape()
+        box2 = BRepPrimAPI_MakeBox(gp_Pnt(10, 10, 10), gp_Pnt(30, 30, 30)).Shape()
+
+        # Create meshes for the proximity algorithm
+        deflection = 1e-3
+        mesher1 = BRepMesh_IncrementalMesh(box1, deflection)
+        mesher2 = BRepMesh_IncrementalMesh(box2, deflection)
+        mesher1.Perform()
+        mesher2.Perform()
+
+        # Perform shape proximity check
+        tolerance = 0.1
+        isect_test = BRepExtrema_ShapeProximity(box1, box2, tolerance)
+        isect_test.Perform()
+
+        # Get intersect faces from Shape1
+        overlaps1 = isect_test.OverlapSubShapes1()
+        face_indices1 = overlaps1.Keys()
+        self.assertEqual(face_indices1, [1, 3, 5])
+
 
 def suite():
     test_suite = unittest.TestSuite()

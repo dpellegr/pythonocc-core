@@ -1,6 +1,6 @@
 /*
 
-Copyright 2008-2014 Thomas Paviot (tpaviot@gmail.com)
+Copyright 2008-2020 Thomas Paviot (tpaviot@gmail.com)
 
 This file is part of pythonOCC.
 
@@ -19,12 +19,19 @@ along with pythonOCC.  If not, see <http://www.gnu.org/licenses/>.
 
 */
 
-/*
-Exception handling
-*/
 %{
 #include <Standard_Failure.hxx>
 #include <Standard_ErrorHandler.hxx>
+%}
+
+%inline %{
+void process_exception(Standard_Failure const& error, std::string method_name, std::string class_name) {
+    std::string error_name = error.DynamicType()->Name();
+	std::string error_message = error.GetMessageString();
+	std::string message = error_name + error_message +
+	                      " raised from method " + method_name + " of class " + class_name;
+	PyErr_SetString(PyExc_RuntimeError, message.c_str());
+}
 %}
 
 %exception
@@ -34,16 +41,9 @@ Exception handling
         OCC_CATCH_SIGNALS
         $action
     } 
-    catch(Standard_Failure)
+    catch(Standard_Failure const& error)
     {
-	    Handle(Standard_Failure) error = Standard_Failure::Caught ();
-	    char *error_name = (char*) error->DynamicType()->Name();
-	    char *error_message = (char*) error->GetMessageString();
-	    std::string message;
-	    if (error_name) message += std::string(error_name) + "\n";
-	    if (error_message) message += std::string(error_message);
-	    // raise the python exception
-	    PyErr_SetString(PyExc_RuntimeError, message.c_str());
-	    return NULL;
+	    process_exception(error, "$name", "$parentclassname");
+	    SWIG_fail;
     }
 }
