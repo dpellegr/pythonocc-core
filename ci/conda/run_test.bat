@@ -1,3 +1,2 @@
 cd ..\work\test
-python run_tests.py
-python core_webgl_unittest.py
+python core_wrapper_features_unittest.py

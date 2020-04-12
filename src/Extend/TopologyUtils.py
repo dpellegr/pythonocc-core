@@ -17,25 +17,28 @@
 ##You should have received a copy of the GNU Lesser General Public License
 ##along with pythonOCC.  If not, see <http://www.gnu.org/licenses/>.
 
-from __future__ import print_function
-
-from OCC.Core.BRep import BRep_Tool
+from OCC.Core.BRep import BRep_Tool, BRep_Builder
 from OCC.Core.BRepTools import BRepTools_WireExplorer
+from OCC.Core.gp import gp_Ax2, gp_Dir, gp_Pnt
+from OCC.Core.HLRBRep import HLRBRep_Algo, HLRBRep_HLRToShape
+from OCC.Core.HLRAlgo import HLRAlgo_Projector
 from OCC.Core.TopAbs import (TopAbs_VERTEX, TopAbs_EDGE, TopAbs_FACE, TopAbs_WIRE,
                              TopAbs_SHELL, TopAbs_SOLID, TopAbs_COMPOUND,
                              TopAbs_COMPSOLID)
 from OCC.Core.TopExp import TopExp_Explorer, topexp_MapShapesAndAncestors
-from OCC.Core.TopTools import (TopTools_ListOfShape,
-                               TopTools_ListIteratorOfListOfShape,
+from OCC.Core.TopTools import (TopTools_ListIteratorOfListOfShape,
                                TopTools_IndexedDataMapOfShapeListOfShape)
-from OCC.Core.TopoDS import (TopoDS_Wire, TopoDS_Vertex, TopoDS_Edge,
+from OCC.Core.TopoDS import (topods, TopoDS_Wire, TopoDS_Vertex, TopoDS_Edge,
                              TopoDS_Face, TopoDS_Shell, TopoDS_Solid,
                              TopoDS_Compound, TopoDS_CompSolid, topods_Edge,
                              topods_Vertex, TopoDS_Iterator)
-from OCC.Core.GCPnts import GCPnts_UniformAbscissa
+from OCC.Core.GCPnts import (GCPnts_UniformAbscissa,
+                             GCPnts_QuasiUniformDeflection,
+                             GCPnts_UniformDeflection)
 from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
 
-class WireExplorer(object):
+
+class WireExplorer:
     '''
     Wire traversal
     '''
@@ -55,8 +58,7 @@ class WireExplorer(object):
             self._reinitialize()
         topologyType = topods_Edge if edges else topods_Vertex
         seq = []
-        hashes = []  # list that stores hashes to avoid redundancy
-        occ_seq = TopTools_ListOfShape()
+        occ_seq = []
         while self.wire_explorer.More():
             # loop edges
             if edges:
@@ -64,18 +66,13 @@ class WireExplorer(object):
             # loop vertices
             else:
                 current_item = self.wire_explorer.CurrentVertex()
-            current_item_hash = current_item.__hash__()
-            if not current_item_hash in hashes:
-                hashes.append(current_item_hash)
-                occ_seq.Append(current_item)
+            occ_seq.append(current_item)
             self.wire_explorer.Next()
 
         # Convert occ_seq to python list
-        occ_iterator = TopTools_ListIteratorOfListOfShape(occ_seq)
-        while occ_iterator.More():
-            topo_to_add = topologyType(occ_iterator.Value())
+        for elem in occ_seq:
+            topo_to_add = topologyType(elem)
             seq.append(topo_to_add)
-            occ_iterator.Next()
         self.done = True
         return iter(seq)
 
@@ -86,12 +83,12 @@ class WireExplorer(object):
         return self._loop_topo(edges=False)
 
 
-class TopologyExplorer(object):
+class TopologyExplorer:
     '''
     Topology traversal
     '''
 
-    def __init__(self, myShape, ignore_orientation=False):
+    def __init__(self, myShape, ignore_orientation=True):
         """
 
         implements topology traversal from any TopoDS_Shape
@@ -121,6 +118,19 @@ class TopologyExplorer(object):
         """
         self.myShape = myShape
         self.ignore_orientation = ignore_orientation
+
+        # the topoFactory dicts maps topology types and functions that can
+        # create this topology
+        self.topoFactory = {
+            TopAbs_VERTEX: topods.Vertex,
+            TopAbs_EDGE: topods.Edge,
+            TopAbs_FACE: topods.Face,
+            TopAbs_WIRE: topods.Wire,
+            TopAbs_SHELL: topods.Shell,
+            TopAbs_SOLID: topods.Solid,
+            TopAbs_COMPOUND: topods.Compound,
+            TopAbs_COMPSOLID: topods.CompSolid
+        }
         self.topExp = TopExp_Explorer()
 
     def _loop_topo(self, topologyType, topologicalEntity=None, topologyTypeToAvoid=None):
@@ -139,8 +149,8 @@ class TopologyExplorer(object):
                      TopAbs_COMPOUND: TopoDS_Compound,
                      TopAbs_COMPSOLID: TopoDS_CompSolid}
 
-        if not topologyType in topoTypes.keys():
-            raise AssertionError('%s not one of %s' % (topologyType, topoTypes.keys()))
+        if topologyType not in topoTypes.keys():
+            raise AssertionError("%s not one of %s" % (topologyType, topoTypes.keys()))
         # use self.myShape if nothing is specified
         if topologicalEntity is None and topologyTypeToAvoid is None:
             self.topExp.Init(self.myShape, topologyType)
@@ -153,22 +163,11 @@ class TopologyExplorer(object):
                              topologyType,
                              topologyTypeToAvoid)
         seq = []
-        hashes = []  # list that stores hashes to avoid redundancy
-        occ_seq = TopTools_ListOfShape()
         while self.topExp.More():
             current_item = self.topExp.Current()
-            current_item_hash = current_item.__hash__()
-
-            if not current_item_hash in hashes:
-                hashes.append(current_item_hash)
-                occ_seq.Append(current_item)
-
+            topo_to_add = self.topoFactory[topologyType](current_item)
+            seq.append(topo_to_add)
             self.topExp.Next()
-        # Convert occ_seq to python list
-        occ_iterator = TopTools_ListIteratorOfListOfShape(occ_seq)
-        while occ_iterator.More():
-            seq.append(occ_iterator.Value())
-            occ_iterator.Next()
 
         if self.ignore_orientation:
             # filter out those entities that share the same TShape
@@ -182,7 +181,7 @@ class TopologyExplorer(object):
                         break
                 if _present is False:
                     filter_orientation_seq.append(i)
-            return filter_orientation_seq
+            return iter(filter_orientation_seq)
         else:
             return iter(seq)
 
@@ -193,7 +192,10 @@ class TopologyExplorer(object):
         return self._loop_topo(TopAbs_FACE)
 
     def _number_of_topo(self, iterable):
-        return sum(1 for _ in iterable)
+        n = 0
+        for _ in iterable:
+            n += 1
+        return n
 
     def number_of_faces(self):
         return self._number_of_topo(self.faces())
@@ -292,13 +294,12 @@ class TopologyExplorer(object):
         _map = TopTools_IndexedDataMapOfShapeListOfShape()
         topexp_MapShapesAndAncestors(self.myShape, topoTypeA, topoTypeB, _map)
         results = _map.FindFromKey(topologicalEntity)
-        if results.IsEmpty():
+        if results.Size() == 0:
             yield None
 
         topology_iterator = TopTools_ListIteratorOfListOfShape(results)
         while topology_iterator.More():
-
-            topo_entity = topology_iterator.Value()
+            topo_entity = self.topoFactory[topoTypeB](topology_iterator.Value())
 
             # return the entity if not in set
             # to assure we're not returning entities several times
@@ -330,7 +331,7 @@ class TopologyExplorer(object):
         _map = TopTools_IndexedDataMapOfShapeListOfShape()
         topexp_MapShapesAndAncestors(self.myShape, topoTypeA, topoTypeB, _map)
         results = _map.FindFromKey(topologicalEntity)
-        if results.IsEmpty():
+        if results.Size() == 0:
             return None
         topology_iterator = TopTools_ListIteratorOfListOfShape(results)
         while topology_iterator.More():
@@ -366,7 +367,10 @@ class TopologyExplorer(object):
         return self._loop_topo(TopAbs_EDGE, face)
 
     def number_of_edges_from_face(self, face):
-        return sum(1 for _ in self._loop_topo(TopAbs_EDGE, face))
+        cnt = 0
+        for _ in self._loop_topo(TopAbs_EDGE, face):
+            cnt += 1
+        return cnt
 
     # ======================================================================
     # VERTEX <-> EDGE
@@ -375,7 +379,10 @@ class TopologyExplorer(object):
         return self._loop_topo(TopAbs_VERTEX, edg)
 
     def number_of_vertices_from_edge(self, edg):
-        return sum(1 for _ in self._loop_topo(TopAbs_VERTEX, edg))
+        cnt = 0
+        for _ in self._loop_topo(TopAbs_VERTEX, edg):
+            cnt += 1
+        return cnt
 
     def edges_from_vertex(self, vertex):
         return self._map_shapes_and_ancestors(TopAbs_VERTEX, TopAbs_EDGE, vertex)
@@ -390,7 +397,10 @@ class TopologyExplorer(object):
         return self._loop_topo(TopAbs_EDGE, wire)
 
     def number_of_edges_from_wire(self, wire):
-        return sum(1 for _ in self._loop_topo(TopAbs_EDGE, wire))
+        cnt = 0
+        for _ in self._loop_topo(TopAbs_EDGE, wire):
+            cnt += 1
+        return cnt
 
     def wires_from_edge(self, edg):
         return self._map_shapes_and_ancestors(TopAbs_EDGE, TopAbs_WIRE, edg)
@@ -408,7 +418,10 @@ class TopologyExplorer(object):
         return self._loop_topo(TopAbs_WIRE, face)
 
     def number_of_wires_from_face(self, face):
-        return sum(1 for _ in self._loop_topo(TopAbs_WIRE, face))
+        cnt = 0
+        for _ in self._loop_topo(TopAbs_WIRE, face):
+            cnt += 1
+        return cnt
 
     def faces_from_wire(self, wire):
         return self._map_shapes_and_ancestors(TopAbs_WIRE, TopAbs_FACE, wire)
@@ -429,7 +442,10 @@ class TopologyExplorer(object):
         return self._loop_topo(TopAbs_VERTEX, face)
 
     def number_of_vertices_from_face(self, face):
-        return sum(1 for _ in self._loop_topo(TopAbs_VERTEX, face))
+        cnt = 0
+        for _ in self._loop_topo(TopAbs_VERTEX, face):
+            cnt += 1
+        return cnt
 
     # ======================================================================
     # FACE <-> SOLID
@@ -444,12 +460,15 @@ class TopologyExplorer(object):
         return self._loop_topo(TopAbs_FACE, solid)
 
     def number_of_faces_from_solids(self, solid):
-        return sum(1 for _ in self._loop_topo(TopAbs_FACE, solid))
+        cnt = 0
+        for _ in self._loop_topo(TopAbs_FACE, solid):
+            cnt += 1
+        return cnt
 
 
 def dump_topology_to_string(shape, level=0, buffer=""):
     """
-    Reutnrs the details of an object from the top down
+    Return the details of an object from the top down
     """
     brt = BRep_Tool()
     s = shape.ShapeType()
@@ -469,7 +488,7 @@ def dump_topology_to_string(shape, level=0, buffer=""):
 # Edge and wire discretizers
 #
 
-def discretize_wire(a_topods_wire):
+def discretize_wire(a_topods_wire, deflection=0.5):
     """ Returns a set of points
     """
     if not is_wire(a_topods_wire):
@@ -478,15 +497,16 @@ def discretize_wire(a_topods_wire):
     wire_pnts = []
     # loop over ordered edges
     for edg in wire_explorer.ordered_edges():
-        edg_pnts = discretize_edge(edg)
+        edg_pnts = discretize_edge(edg, deflection)
         wire_pnts += edg_pnts
     return wire_pnts
 
 
-def discretize_edge(a_topods_edge, deflection=0.5):
+def discretize_edge(a_topods_edge, deflection=0.2, algorithm="QuasiUniformDeflection"):
     """ Take a TopoDS_Edge and returns a list of points
     The more deflection is small, the more the discretization is precise,
     i.e. the more points you get in the returned points
+    algorithm: to choose in ["UniformAbscissa", "QuasiUniformDeflection"]
     """
     if not is_edge(a_topods_edge):
         raise AssertionError("You must provide a TopoDS_Edge to the discretize_edge function.")
@@ -497,7 +517,14 @@ def discretize_edge(a_topods_edge, deflection=0.5):
     first = curve_adaptator.FirstParameter()
     last = curve_adaptator.LastParameter()
 
-    discretizer = GCPnts_UniformAbscissa()
+    if algorithm == "QuasiUniformDeflection":
+        discretizer = GCPnts_QuasiUniformDeflection()
+    elif algorithm == "UniformAbscissa":
+        discretizer = GCPnts_UniformAbscissa()
+    elif algorithm == "UniformDeflection":
+        discretizer = GCPnts_UniformDeflection()
+    else:
+        raise AssertionError("Unknown algorithm")
     discretizer.Initialize(curve_adaptator, deflection, first, last)
 
     if not discretizer.IsDone():
@@ -515,32 +542,120 @@ def discretize_edge(a_topods_edge, deflection=0.5):
 # TopoDS_Shape type utils
 #
 def is_vertex(topods_shape):
+    if not hasattr(topods_shape, "ShapeType"):
+        return False
     return topods_shape.ShapeType() == TopAbs_VERTEX
 
 
 def is_solid(topods_shape):
+    if not hasattr(topods_shape, "ShapeType"):
+        return False
     return topods_shape.ShapeType() == TopAbs_SOLID
 
 
 def is_edge(topods_shape):
+    if not hasattr(topods_shape, "ShapeType"):
+        return False
     return topods_shape.ShapeType() == TopAbs_EDGE
 
 
 def is_face(topods_shape):
+    if not hasattr(topods_shape, "ShapeType"):
+        return False
     return topods_shape.ShapeType() == TopAbs_FACE
 
 
 def is_shell(topods_shape):
+    if not hasattr(topods_shape, "ShapeType"):
+        return False
     return topods_shape.ShapeType() == TopAbs_SHELL
 
 
 def is_wire(topods_shape):
+    if not hasattr(topods_shape, "ShapeType"):
+        return False
     return topods_shape.ShapeType() == TopAbs_WIRE
 
 
 def is_compound(topods_shape):
+    if not hasattr(topods_shape, "ShapeType"):
+        return False
     return topods_shape.ShapeType() == TopAbs_COMPOUND
 
 
 def is_compsolid(topods_shape):
+    if not hasattr(topods_shape, "ShapeType"):
+        return False
     return topods_shape.ShapeType() == TopAbs_COMPSOLID
+
+
+def get_type_as_string(topods_shape):
+    """ just get the type string, remove TopAbs_ and lowercas all ending letters
+    """
+    types = {TopAbs_VERTEX: "Vertex", TopAbs_COMPSOLID: "CompSolid", TopAbs_FACE: "Face",
+             TopAbs_WIRE: "Wire", TopAbs_EDGE: "Edge", TopAbs_COMPOUND: "Compound",
+             TopAbs_COMPSOLID: "CompSolid", TopAbs_SOLID: "Solid"}
+    return types[topods_shape.ShapeType()]
+
+
+def get_sorted_hlr_edges(topods_shape, position=gp_Pnt(), direction=gp_Dir(), export_hidden_edges=True):
+    """ Return hidden and visible edges as two lists of edges
+    """
+    hlr = HLRBRep_Algo()
+    hlr.Add(topods_shape)
+
+    projector = HLRAlgo_Projector(gp_Ax2(position, direction))
+
+    hlr.Projector(projector)
+    hlr.Update()
+    hlr.Hide()
+
+    hlr_shapes = HLRBRep_HLRToShape(hlr)
+
+    # visible edges
+    visible = []
+    visible_sharp_edges_as_compound = hlr_shapes.VCompound()
+    if visible_sharp_edges_as_compound:
+        visible += list(TopologyExplorer(visible_sharp_edges_as_compound).edges())
+    visible_smooth_edges_as_compound = hlr_shapes.Rg1LineVCompound()
+    if visible_smooth_edges_as_compound:
+        visible += list(TopologyExplorer(visible_smooth_edges_as_compound).edges())
+    #visible_sewn_edges_as_compound = hlr_shapes.RgNLineVCompound()
+    #if visible_sewn_edges_as_compound:
+    #    visible += list(TopologyExplorer(visible_sewn_edges_as_compound).edges())
+    visible_contour_edges_as_compound = hlr_shapes.OutLineVCompound()
+    if visible_contour_edges_as_compound:
+        visible += list(TopologyExplorer(visible_contour_edges_as_compound).edges())
+    #visible_isoparameter_edges_as_compound = hlr_shapes.IsoLineVCompound()
+    #if visible_isoparameter_edges_as_compound:
+    #    visible += list(TopologyExplorer(visible_isoparameter_edges_as_compound).edges())
+    # hidden edges
+    hidden = []
+    if export_hidden_edges:
+        hidden_sharp_edges_as_compound = hlr_shapes.HCompound()
+        if hidden_sharp_edges_as_compound:
+            hidden += list(TopologyExplorer(hidden_sharp_edges_as_compound).edges())
+        hidden_contour_edges_as_compound = hlr_shapes.OutLineHCompound()
+        if hidden_contour_edges_as_compound:
+            hidden += list(TopologyExplorer(hidden_contour_edges_as_compound).edges())
+
+    return visible, hidden
+
+
+def list_of_shapes_to_compound(list_of_shapes):
+    """ takes a list of shape in input, gather all shapes into one compound
+    returns the compund and a boolean, True if all shapes were added to the compund,
+    False otherwise
+    """
+    all_shapes_converted = True
+    the_compound = TopoDS_Compound()
+    the_builder = BRep_Builder()
+    the_builder.MakeCompound(the_compound)
+    for shp in list_of_shapes:
+        # first ensure the shape is not Null
+        if shp.IsNull():
+            all_shapes_converted = False
+            continue
+        else:
+            the_builder.Add(the_compound, shp)
+    return the_compound, all_shapes_converted

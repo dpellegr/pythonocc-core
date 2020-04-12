@@ -17,20 +17,18 @@
 ##You should have received a copy of the GNU Lesser General Public License
 ##along with pythonOCC.  If not, see <http://www.gnu.org/licenses/>.
 
-from __future__ import print_function
-
 import unittest
 
 from OCC.Core.gp import (gp_Pnt, gp_Pnt2d, gp_Ax3, gp_Vec, gp_Pln,
                          gp_Elips, gp_OX, gp_XOY, gp_YOZ, gp_OX2d, gp_Dir2d,
                          gp_Ax22d, gp_Parab2d, gp_Dir)
-from OCC.Core.Geom2d import Geom2d_OffsetCurve, Geom2d_Circle, Geom2d_TrimmedCurve
+from OCC.Core.Geom2d import Geom2d_OffsetCurve, Geom2d_Circle, Geom2d_TrimmedCurve, Geom2d_Parabola
 from OCC.Core.Geom2dAdaptor import Geom2dAdaptor_Curve
 from OCC.Core.Geom2dAPI import Geom2dAPI_Interpolate, Geom2dAPI_PointsToBSpline
 from OCC.Core.GCPnts import GCPnts_UniformAbscissa
 from OCC.Core.Geom import (Geom_Circle, Geom_SphericalSurface, Geom_OffsetSurface,
                            Geom_BezierSurface, Geom_BSplineSurface, Geom_SurfaceOfRevolution,
-                           Geom_RectangularTrimmedSurface, Geom_BSplineCurve)
+                           Geom_RectangularTrimmedSurface, Geom_BSplineCurve, Geom_Ellipse)
 from OCC.Core.GeomAPI import (GeomAPI_PointsToBSpline, GeomAPI_ExtremaSurfaceSurface,
                               GeomAPI_ProjectPointOnCurve, GeomAPI_ProjectPointOnSurf,
                               GeomAPI_PointsToBSplineSurface)
@@ -140,13 +138,15 @@ class TestGeometry(unittest.TestCase):
         self.assertIsInstance(N, gp_Pnt)
         NbResults = PPC.NbPoints()
         edg = make_edge(C)
-        self.assertFalse(edg.IsNull())
+        self.assertFalse(edg is None)
 
         if NbResults > 0:
             for i in range(1, NbResults+1):
                 Q = PPC.Point(i)
                 self.assertIsInstance(Q, gp_Pnt)
                 distance = PPC.Distance(i)
+                # in any case, it should be > 1
+                self.assertGreater(distance, 1.)
 
         pstring = "N : at Distance : " + repr(PPC.LowerDistance())
 
@@ -154,6 +154,8 @@ class TestGeometry(unittest.TestCase):
             Q = PPC.Point(i)
             self.assertIsInstance(Q, gp_Pnt)
             distance = PPC.Distance(i)
+            # in any case, it should be > 1
+            self.assertGreater(distance, 1.)
             pstring = "Q" + repr(i) + ": at Distance :" + repr(PPC.Distance(i))
             print(pstring)
 
@@ -171,12 +173,16 @@ class TestGeometry(unittest.TestCase):
                 Q = PPS.Point(i)
                 self.assertTrue(isinstance(Q, gp_Pnt))
                 distance = PPS.Distance(i)
-        pstring = "N  : at Distance : " + repr(PPS.LowerDistance())
+                # in any case, it should be > 1
+                self.assertGreater(distance, 1.)
+        lower_d = PPS.LowerDistance()
+        self.assertGreater(lower_d, 1.)
         if NbResults > 0:
             for i in range(1, NbResults+1):
                 Q = PPS.Point(i)
                 distance = PPS.Distance(i)
                 pstring = "Q" + repr(i) + ": at Distance :" + repr(PPS.Distance(i))
+                print(pstring)
 
     def test_points_from_intersection(self):
         '''Test: points from intersection'''
@@ -189,15 +195,20 @@ class TestGeometry(unittest.TestCase):
             if NbResults > 0:
                 for i in range(1, NbResults + 1):
                     P = ICQ.Point(i)
+                    self.assertIsInstance(P, gp_Pnt)
         aPlane = GC_MakePlane(PL).Value()
         aSurface = Geom_RectangularTrimmedSurface(aPlane, - 8., 8., - 12., 12., True, True)
+        self.assertIsNotNone(aSurface)
+        self.assertFalse(aSurface is None)
         anEllips = GC_MakeEllipse(EL).Value()
+        self.assertIsInstance(anEllips, Geom_Ellipse)
         if ICQ.IsDone():
             NbResults = ICQ.NbPoints()
             if NbResults > 0:
                 for i in range(1, NbResults + 1):
                     P = ICQ.Point(i)
-                    pstring = "P%i" % i
+                    self.assertIsInstance(P, gp_Pnt)
+                    #pstring = "P%i" % i
 
     def test_parabola(self):
         '''Test: parabola'''
@@ -210,7 +221,10 @@ class TestGeometry(unittest.TestCase):
         Para = gp_Parab2d(A, 6)
         aParabola = GCE2d_MakeParabola(Para)
         gParabola = aParabola.Value()
+        self.assertIsInstance(gParabola, Geom2d_Parabola)
         aTrimmedCurve = Geom2d_TrimmedCurve(gParabola, -100, 100, True)
+        self.assertIsNotNone(aTrimmedCurve)
+        self.assertFalse(aTrimmedCurve is None)
 
     def test_axis(self):
         '''Test: axis'''
@@ -220,17 +234,19 @@ class TestGeometry(unittest.TestCase):
         IsDirectA = A.Direct()
         self.assertTrue(IsDirectA)
         AXDirection = A.XDirection()
+        self.assertIsInstance(AXDirection, gp_Dir)
         AYDirection = A.YDirection()
+        self.assertIsInstance(AYDirection, gp_Dir)
         P2 = gp_Pnt(5, 3, 4)
         A2 = gp_Ax3(P2, D)
         A2.YReverse()
         # axis3 is now left handed
         IsDirectA2 = A2.Direct()
-        self.assertTrue(IsDirectA)
+        self.assertFalse(IsDirectA2)
         A2XDirection = A2.XDirection()
         self.assertTrue(isinstance(A2XDirection, gp_Dir))
         A2YDirection = A2.YDirection()
-        self.assertTrue(isinstance(A2XDirection, gp_Dir))
+        self.assertTrue(isinstance(A2YDirection, gp_Dir))
 
     def test_bspline(self):
         '''Test: bspline'''
@@ -308,6 +324,7 @@ class TestGeometry(unittest.TestCase):
         dist = 1
         OC = Geom2d_OffsetCurve(SPL1, dist)
         result = OC.IsCN(2)
+        self.assertTrue(result)
 
         dist2 = 1.5
         OC2 = Geom2d_OffsetCurve(SPL1, dist2)
@@ -337,23 +354,33 @@ class TestGeometry(unittest.TestCase):
                 # find the solution circle
                 pnt1 = gp_Pnt2d()
                 parsol, pararg = TR.Tangency1(k, pnt1)
+                self.assertGreater(parsol, 0.)
+                self.assertGreater(pararg, 0.)
                 # find the first tangent point
                 pnt2 = gp_Pnt2d()
                 parsol, pararg = TR.Tangency2(k, pnt2)
+                self.assertGreater(parsol, 0.)
+                self.assertGreater(pararg, 0.)
                 # find the second tangent point
 
         aLine = GCE2d_MakeSegment(L, -2, 20).Value()
+        self.assertIsInstance(aLine, Geom2d_TrimmedCurve)
         if TR.IsDone():
             NbSol = TR.NbSolutions()
             for k in range(1, NbSol+1):
                 circ = TR.ThisSolution(k)
                 aCircle = Geom2d_Circle(circ)
+                self.assertIsInstance(aCircle, Geom2d_Circle)
                 # find the solution circle (index, outvalue, outvalue, gp_Pnt2d)
                 pnt3 = gp_Pnt2d()
                 parsol, pararg = TR.Tangency1(k, pnt3)
+                self.assertGreater(parsol, 0.)
+                self.assertGreater(pararg, 0.)
                 # find the first tangent point
                 pnt4 = gp_Pnt2d()
                 parsol, pararg = TR.Tangency2(k, pnt4)
+                self.assertGreater(parsol, 0.)
+                self.assertGreater(pararg, 0.)
 
     def test_surface_from_curves(self):
         '''Test: surfaces from curves'''
@@ -395,9 +422,9 @@ class TestGeometry(unittest.TestCase):
         aBSplineSurface1 = aGeomFill1.Surface()
         self.assertTrue(aBSplineSurface1 is not None)
         aBSplineSurface2 = aGeomFill2.Surface()
-        self.assertTrue(aBSplineSurface1 is not None)
+        self.assertTrue(aBSplineSurface2 is not None)
         aBSplineSurface3 = aGeomFill3.Surface()
-        self.assertTrue(aBSplineSurface1 is not None)
+        self.assertTrue(aBSplineSurface3 is not None)
 
     def test_pipes(self):
         '''Test: pipes'''
@@ -429,7 +456,7 @@ class TestGeometry(unittest.TestCase):
         aSurface3 = aPipe3.Surface()
         aSurface3.Translate(gp_Vec(10, 0, 0))
 
-        for i, mode in enumerate([GeomFill_IsConstantNormal,
+        for _, mode in enumerate([GeomFill_IsConstantNormal,
                                   GeomFill_IsCorrectedFrenet,
                                   GeomFill_IsDarboux,
                                   GeomFill_IsFrenet,
@@ -492,7 +519,6 @@ class TestGeometry(unittest.TestCase):
 
         BZ1, BZ2, BZ3, BZ4 = map(Geom_BezierSurface, [array1, array2,
                                                       array3, array4])
-
         bezierarray = TColGeom_Array2OfBezierSurface(1, 2, 1, 2)
         bezierarray.SetValue(1, 1, BZ1)
         bezierarray.SetValue(1, 2, BZ2)
@@ -560,9 +586,9 @@ class TestGeometry(unittest.TestCase):
         aCurve = GeomAPI_PointsToBSpline(point_list_to_TColgp_Array1OfPnt(array)).Curve()
         SOR = Geom_SurfaceOfRevolution(aCurve, gp_OX())
         edge = make_edge(aCurve)
-        self.assertFalse(edge.IsNull())
+        self.assertFalse(edge is None)
         face = make_face(SOR)
-        self.assertFalse(face.IsNull())
+        self.assertFalse(face is None)
 
     def test_distances(self):
         '''Test: distances'''
@@ -617,8 +643,8 @@ class TestGeometry(unittest.TestCase):
         aSurf2 = GeomAPI_PointsToBSplineSurface(array3).Surface()
         ESS = GeomAPI_ExtremaSurfaceSurface(aSurf1, aSurf2)
         dist = ESS.LowerDistance()
-        self.assertGreater(dist, 1.25)
-        self.assertLess(dist, 1.26)
+        self.assertGreater(dist, 1.20)
+        self.assertLess(dist, 1.25)
         a, b = gp_Pnt(), gp_Pnt()
         ESS.NearestPoints(a, b)
 
