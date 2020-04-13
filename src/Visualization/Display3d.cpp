@@ -36,7 +36,7 @@ Display3d::Display3d()
   }
   
   // Create V3dViewer and V3d_View
-  myV3dViewer = new V3d_Viewer(GetGraphicDriver(), (short* const)"viewer");
+  myV3dViewer = new V3d_Viewer(GetGraphicDriver());
   
   // Create AISInteractiveViewer
   myAISContext = new AIS_InteractiveContext(myV3dViewer);
